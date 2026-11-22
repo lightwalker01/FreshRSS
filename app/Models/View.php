@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /**
- * @phpstan-import-type ExtensionFullMetadata from FreshRSS_extension_Controller
+ * @phpstan-import-type CatalogEntry from FreshRSS_ExtensionCatalog
  */
 class FreshRSS_View extends Minz_View {
 
@@ -143,14 +143,13 @@ class FreshRSS_View extends Minz_View {
 	public bool $selectorSuccess;
 
 	// Extensions
-	/** @var list<ExtensionFullMetadata> */
-	public array $available_extensions;
+	/** @var array<string,list<array{entry:CatalogEntry,status:array{action:string,reason:string,version:string},local:Minz_Extension|null}>> */
+	public array $marketplace;
+	public bool $catalog_enabled = false;
 	public ?Minz_Extension $ext_details = null;
 	/** @var array{system:array<Minz_Extension>,user:array<Minz_Extension>} */
 	public array $extension_list;
 	public ?Minz_Extension $extension = null;
-	/** @var array<string,string> */
-	public array $extensions_installed;
 
 	// Errors
 	public string $code;

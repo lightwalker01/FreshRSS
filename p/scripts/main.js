@@ -2355,7 +2355,7 @@ function init_confirm_action() {
 	document.body.onclick = function (ev) {
 		const b = ev.target.closest('.confirm');
 		if (b) {
-			let str_confirmation = this.getAttribute('data-str-confirm');
+			let str_confirmation = b.getAttribute('data-str-confirm');
 			if (!str_confirmation) {
 				str_confirmation = context.i18n.confirmation_default;
 			}

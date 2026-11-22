@@ -3,8 +3,6 @@ declare(strict_types=1);
 
 /**
  * The controller to manage extensions.
- *
- * @phpstan-type ExtensionFullMetadata array{name:string,entrypoint:string,author:string,description:string,version:string,type:'system'|'user',url:string,method:string,directory:string,compatibility:string}
  */
 class FreshRSS_extension_Controller extends FreshRSS_ActionController {
 	/**
@@ -29,93 +27,95 @@ class FreshRSS_extension_Controller extends FreshRSS_ActionController {
 			'user' => [],
 		];
 
-		$this->view->extensions_installed = [];
-
+		[$catalog] = FreshRSS_ExtensionCatalog::get();
+		$this->view->catalog_enabled = FreshRSS_Context::userConf()->retrieve_extension_list;
+		$this->view->marketplace = $this->view->catalog_enabled ? ['official' => [], 'community' => []] : [];
 		$extensions = Minz_ExtensionManager::listExtensions();
-		foreach ($extensions as $ext) {
-			$this->view->extension_list[$ext->getType()][] = $ext;
-			$this->view->extensions_installed[$ext->getEntrypoint()] = $ext->getVersion();
+		$listed = [];
+		$inventory = $catalog === [] ? [] : FreshRSS_ExtensionMarketplace::inventory();
+		foreach ($catalog as $entry) {
+			$status = FreshRSS_ExtensionMarketplace::status($entry, $catalog, $inventory);
+			$local = $extensions[$entry['name']] ?? null;
+			if ($local !== null && ($local->getEntrypoint() !== $entry['entrypoint'] ||
+				isset($listed[$local->getName()]) || $status['reason'] === 'ambiguous')) {
+				$local = null;
+			}
+			if ($local !== null) {
+				$listed[$local->getName()] = true;
+				$status['version'] = $local->getVersion();
+			}
+			$group = FreshRSS_ExtensionCatalog::repository($entry['url']) === FreshRSS_ExtensionCatalog::OFFICIAL_REPOSITORY ?
+				'official' : 'community';
+			$this->view->marketplace[$group][] = ['entry' => $entry, 'status' => $status, 'local' => $local];
 		}
-
-		$this->view->available_extensions = $this->getAvailableExtensionList();
+		foreach ($extensions as $extension) {
+			if (!isset($listed[$extension->getName()])) {
+				$this->view->extension_list[$extension->getType()][] = $extension;
+			}
+		}
 	}
 
-	/**
-	 * Fetch extension list from GitHub
-	 * @phpstan-return list<ExtensionFullMetadata>
-	 */
-	protected function getAvailableExtensionList(): array {
-		$extensionListUrl = 'https://raw.githubusercontent.com/FreshRSS/Extensions/refs/heads/main/extensions.json';
-
-		$cacheFile = CACHE_PATH . '/extension_list.json';
-		$fetchResult = null;
-		if (FreshRSS_Context::userConf()->retrieve_extension_list === true) {
-			if (!file_exists($cacheFile) || (time() - (filemtime($cacheFile) ?: 0) > 86400)) {
-				$fetchResult = FreshRSS_http_Util::httpGet($extensionListUrl, $cacheFile, 'json');
-				$json = $fetchResult['body'];
-			} else {
-				$json = @file_get_contents($cacheFile) ?: '';
-			}
+	public function refreshAction(): void {
+		$redirect = ['c' => 'extension', 'a' => 'index'];
+		if (!Minz_Request::isPost()) {
+			Minz_Error::error(405);
+			return;
+		}
+		if (!FreshRSS_Context::userConf()->retrieve_extension_list) {
+			Minz_Request::bad(_t('admin.extensions.marketplace.privacy'), $redirect);
+			return;
+		}
+		[, $success] = FreshRSS_ExtensionCatalog::get(true);
+		if ($success) {
+			Minz_Request::good(_t('admin.extensions.marketplace.refreshed'), $redirect);
 		} else {
-			Minz_Log::warning('The extension list retrieval is disabled in privacy configuration');
-			return [];
+			Minz_Request::bad(_t('admin.extensions.marketplace.refresh_failed'), $redirect);
 		}
+	}
 
-		// we ran into problems, simply ignore them
-		if ($json === '') {
-			$details = '';
-			if (is_array($fetchResult)) {
-				$status = $fetchResult['status'];
-				$error = $fetchResult['error'];
-				$details = ' (HTTP status ' . $status . ($error !== '' ? '; ' . $error : '') . ')';
-			}
-			Minz_Log::error('Could not fetch available extension list from GitHub' . $details);
-			return [];
+	public function marketplaceAction(): void {
+		if (!$this->authorizeFileOperation()) {
+			return;
 		}
-
-		// fetch the list as an array
-		/** @var array<string,mixed> $list*/
-		$list = json_decode($json, true);
-		if (!is_array($list) || empty($list['extensions']) || !is_array($list['extensions'])) {
-			Minz_Log::warning('Failed to convert extension file list');
-			return [];
-		}
-
-		// By now, all the needed data is kept in the main extension file.
-		// In the future we could fetch detail information from the extensions metadata.json, but I tend to stick with
-		// the current implementation for now, unless it becomes too much effort maintain the extension list manually
-		$extensions = [];
-		foreach ($list['extensions'] as $extension) {
-			if (!is_array($extension)) {
+		$redirect = ['c' => 'extension', 'a' => 'index'];
+		$id = Minz_Request::paramString('id');
+		$action = Minz_Request::paramString('operation');
+		[$catalog] = FreshRSS_ExtensionCatalog::get();
+		foreach ($catalog as $entry) {
+			if (FreshRSS_ExtensionCatalog::id($entry) !== $id) {
 				continue;
 			}
-			if (isset($extension['version']) && is_numeric($extension['version'])) {
-				$extension['version'] = (string)$extension['version'];
+			try {
+				FreshRSS_ExtensionMarketplace::apply($entry, $catalog, $action);
+				Minz_Request::good(_t('admin.extensions.marketplace.saved'), $redirect);
+			} catch (RuntimeException $e) {
+				$this->marketplaceError($e, $redirect);
 			}
-			if (!array_key_exists('compatibility', $extension)) {
-				$extension['compatibility'] = '✔';
-			}
-			$keys = ['author', 'description', 'directory', 'entrypoint', 'method', 'name', 'type', 'url', 'version', 'compatibility'];
-			$extension = array_intersect_key($extension, array_flip($keys));	// Keep only valid keys
-			$extension = array_filter($extension, 'is_string');
-			foreach ($keys as $key) {
-				if (empty($extension[$key])) {
-					continue 2;
-				}
-			}
-			if (!in_array($extension['type'], ['system', 'user'], true) || trim($extension['name']) === '') {
-				continue;
-			}
-			/** @var ExtensionFullMetadata $extension */
-			$extensions[] = $extension;
+			return;
 		}
+		Minz_Request::bad(_t('admin.extensions.marketplace.changed'), $redirect);
+	}
 
-		return array_map(static function (array $extension) {
-			if ($extension['compatibility'] !== '✔') {
-				$extension['compatibility'] = version_compare(FRESHRSS_VERSION, $extension['compatibility'], '>=') ? '✔' : '✘';
-			}
-			return $extension;
-		}, $extensions);
+	private function authorizeFileOperation(): bool {
+		if (!Minz_Request::isPost()) {
+			Minz_Error::error(405);
+			return false;
+		}
+		if (!FreshRSS_Auth::hasAccess('admin') || !FreshRSS_Auth::isCsrfOk()) {
+			Minz_Error::error(403);
+			return false;
+		}
+		return !FreshRSS_Auth::requestReauth(['c' => 'extension', 'a' => 'index']);
+	}
+
+	/** @param array{c:string,a:string} $redirect */
+	private function marketplaceError(RuntimeException $e, array $redirect): void {
+		$reason = $e->getMessage();
+		if (!in_array($reason, ['ambiguous', 'origin', 'incompatible', 'unsupported', 'read_only', 'occupied', 'changed'], true)) {
+			Minz_Log::warning($reason);
+			$reason = 'failed';
+		}
+		Minz_Request::bad(_t('admin.extensions.marketplace.' . $reason), $redirect);
 	}
 
 	/**
@@ -202,11 +202,11 @@ class FreshRSS_extension_Controller extends FreshRSS_ActionController {
 				$ext_list = $conf->extensions_enabled;
 				$ext_list = array_filter($ext_list, static function (string $key) use ($type) {
 					// Remove from list the extensions that have disappeared or changed type
-					$extension = Minz_ExtensionManager::findExtension($key);
+					$extension = Minz_ExtensionManager::findByActivationKey($key);
 					return $extension !== null && $extension->getType() === $type;
 				}, ARRAY_FILTER_USE_KEY);
 
-				$ext_list[$ext_name] = true;
+				$ext_list[Minz_ExtensionManager::activationKey($ext)] = true;
 				$conf->extensions_enabled = $ext_list;
 				$conf->save();
 
@@ -268,11 +268,11 @@ class FreshRSS_extension_Controller extends FreshRSS_ActionController {
 				$ext_list = $conf->extensions_enabled;
 				$ext_list = array_filter($ext_list, static function (string $key) use ($type) {
 					// Remove from list the extensions that have disappeared or changed type
-					$extension = Minz_ExtensionManager::findExtension($key);
+					$extension = Minz_ExtensionManager::findByActivationKey($key);
 					return $extension !== null && $extension->getType() === $type;
 				}, ARRAY_FILTER_USE_KEY);
 
-				$ext_list[$ext_name] = false;
+				$ext_list[Minz_ExtensionManager::activationKey($ext)] = false;
 				$conf->extensions_enabled = $ext_list;
 				$conf->save();
 
@@ -290,44 +290,27 @@ class FreshRSS_extension_Controller extends FreshRSS_ActionController {
 		Minz_Request::forward($url_redirect, true);
 	}
 
-	/**
-	 * This action handles deletion of an extension.
-	 *
-	 * Only administrator can remove an extension.
-	 * This action must be reached by a POST request.
-	 *
-	 * Parameter is:
-	 * -e: extension name (urlencoded)
-	 */
 	public function removeAction(): void {
-		if (!FreshRSS_Auth::hasAccess('admin')) {
-			Minz_Error::error(403);
+		if (!$this->authorizeFileOperation()) {
+			return;
 		}
-
-		$url_redirect = ['c' => 'extension', 'a' => 'index'];
-
-		if (Minz_Request::isPost()) {
-			$ext_name = urldecode(Minz_Request::paramString('e'));
-			$ext = Minz_ExtensionManager::findExtension($ext_name);
-
-			if (is_null($ext)) {
-				Minz_Request::bad(_t('feedback.extensions.not_found', $ext_name), $url_redirect);
-				return;
-			}
-
-			$res = recursive_unlink($ext->getPath());
-			if ($res) {
-				Minz_Request::good(
-					_t('feedback.extensions.removed', $ext_name),
-					$url_redirect,
-					showNotification: FreshRSS_Context::userConf()->good_notification_timeout > 0
-				);
-			} else {
-				Minz_Request::bad(_t('feedback.extensions.cannot_remove', $ext_name), $url_redirect);
-			}
+		$redirect = ['c' => 'extension', 'a' => 'index'];
+		$name = urldecode(Minz_Request::paramString('e'));
+		$extension = Minz_ExtensionManager::findExtension($name);
+		if ($extension === null) {
+			Minz_Request::bad(_t('feedback.extensions.not_found', $name), $redirect);
+			return;
 		}
-
-		Minz_Request::forward($url_redirect, true);
+		if (!FreshRSS_ExtensionMarketplace::canRemove($extension)) {
+			Minz_Request::bad(_t('admin.extensions.marketplace.cannot_remove'), $redirect);
+			return;
+		}
+		try {
+			FreshRSS_ExtensionMarketplace::remove($extension);
+			Minz_Request::good(_t('feedback.extensions.removed', $name), $redirect);
+		} catch (RuntimeException $e) {
+			$this->marketplaceError($e, $redirect);
+		}
 	}
 
 	// Supported types with their associated content type

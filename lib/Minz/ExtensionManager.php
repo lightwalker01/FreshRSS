@@ -17,6 +17,10 @@ final class Minz_ExtensionManager {
 	private static array $ext_list_enabled = [];
 	/** @var array<string,bool> */
 	private static array $ext_auto_enabled = [];
+	/** @var array<string,string> */
+	private static array $activationKeys = [];
+	/** @var array<string,Minz_Extension> */
+	private static array $extensionsByActivationKey = [];
 
 	/**
 	 * List of available hooks. Please keep this list sorted.
@@ -30,6 +34,8 @@ final class Minz_ExtensionManager {
 		self::$ext_list = [];
 		self::$ext_list_enabled = [];
 		self::$ext_auto_enabled = [];
+		self::$activationKeys = [];
+		self::$extensionsByActivationKey = [];
 		foreach (Minz_HookType::cases() as $hook_type) {
 			$hadAny |= !empty(self::$hook_list[$hook_type->value]['list']);
 			self::$hook_list[$hook_type->value] = [
@@ -52,13 +58,23 @@ final class Minz_ExtensionManager {
 	 * extension.php should contain at least a class named <name>Extension where
 	 * <name> must match with the entry point in metadata.json. This class must
 	 * inherit from Minz_Extension class.
-	 * @throws Minz_ConfigurationNamespaceException
+	 * @throws RuntimeException
 	 */
 	public static function init(): void {
 		self::reset();
 
+		FreshRSS_ExtensionMarketplace::locked(static function (): void {
+			self::scan();
+		});
+	}
+
+	private static function scan(): void {
 		$list_core_extensions = array_diff(scandir(CORE_EXTENSIONS_PATH) ?: [], [ '..', '.' ]);
-		$list_thirdparty_extensions = array_diff(scandir(THIRDPARTY_EXTENSIONS_PATH) ?: [], [ '..', '.' ], $list_core_extensions);
+		$list_thirdparty_extensions = array_diff(
+			scandir(THIRDPARTY_EXTENSIONS_PATH) ?: [],
+			['..', '.', FreshRSS_ExtensionMarketplace::WORK_DIRECTORY],
+			$list_core_extensions
+		);
 		array_walk($list_core_extensions, function (&$s) { $s = CORE_EXTENSIONS_PATH . '/' . $s; });
 		array_walk($list_thirdparty_extensions, function (&$s) { $s = THIRDPARTY_EXTENSIONS_PATH . '/' . $s; });
 
@@ -166,8 +182,11 @@ final class Minz_ExtensionManager {
 	private static function register(Minz_Extension $ext): void {
 		$name = $ext->getName();
 		self::$ext_list[$name] = $ext;
+		$key = FreshRSS_ExtensionMarketplace::activationKey($ext);
+		self::$activationKeys[$name] = $key;
+		self::$extensionsByActivationKey[$key] = $ext;
 
-		if ($ext->getType() === 'system' && !empty(self::$ext_auto_enabled[$name])) {
+		if ($ext->getType() === 'system' && !empty(self::$ext_auto_enabled[$key])) {
 			self::enable($ext->getName(), 'system');
 		}
 	}
@@ -217,7 +236,10 @@ final class Minz_ExtensionManager {
 		}
 		foreach ($ext_list as $ext_name => $ext_status) {
 			if ($ext_status && is_string($ext_name)) {
-				self::enable($ext_name, $onlyOfType);
+				$extension = self::findByActivationKey($ext_name);
+				if ($extension !== null) {
+					self::enable($extension->getName(), $onlyOfType);
+				}
 			}
 		}
 	}
@@ -248,6 +270,15 @@ final class Minz_ExtensionManager {
 		}
 
 		return self::$ext_list[$ext_name];
+	}
+
+	public static function activationKey(Minz_Extension $extension): string {
+		return self::$activationKeys[$extension->getName()] ?? $extension->getName();
+	}
+
+	public static function findByActivationKey(string $key): ?Minz_Extension {
+		$extension = self::$extensionsByActivationKey[$key] ?? null;
+		return $extension !== null && self::activationKey($extension) === $key ? $extension : null;
 	}
 
 	/**
