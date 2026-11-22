@@ -1,13 +1,16 @@
-name: Publish Docker images
+name: Publish FreshRSS marketplace preview
 
 on:
   push:
     branches:
-      - edge
+      - preview/marketplace-pr-2
   workflow_dispatch:
 
 # To ensure that if the latest push finishes faster than an earlier run, the previous run won't
 # overwrite it later. (by queueing the runs)
+env:
+  PREVIEW_COMMIT: eb3bcf7be772e70fd6f8c6fa441d48ba3520519c
+
 concurrency:
   group: docker-publish-${{ github.ref_name }}
   cancel-in-progress: false
@@ -16,7 +19,7 @@ permissions: {}
 
 jobs:
   build-container-image:
-    if: github.ref == 'refs/heads/edge'
+    if: github.ref == 'refs/heads/preview/marketplace-pr-2'
     name: Build Docker image ${{ matrix.name }}
     runs-on: ubuntu-latest
     permissions:
@@ -27,14 +30,6 @@ jobs:
         include:
           - name: Debian
             file: Docker/Dockerfile
-            tags: |
-              type=raw,value=edge
-              type=sha,prefix=sha-
-          - name: Alpine
-            file: Docker/Dockerfile-Alpine
-            tags: |
-              type=raw,value=edge-alpine
-              type=sha,prefix=sha-,suffix=-alpine
     steps:
     - name: Set up QEMU
       uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
@@ -45,6 +40,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
+        ref: ${{ env.PREVIEW_COMMIT }}
         persist-credentials: false
 
     - name: Get FreshRSS version
@@ -53,17 +49,19 @@ jobs:
         echo "$FRESHRSS_VERSION"
         echo "FRESHRSS_VERSION=$FRESHRSS_VERSION" >> $GITHUB_ENV
 
+    - name: Allow writes to the extensions volume
+      run: printf '\nRUN chmod g+w /var/www/FreshRSS/extensions\n' >> Docker/Dockerfile
+
     - name: Add metadata to Docker images
       id: meta
-      env:
-        DOCKER_METADATA_SHORT_SHA_LENGTH: '12'
       uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
       with:
         flavor: latest=false
-        images: ghcr.io/${{ github.repository }}
-        tags: ${{ matrix.tags }}
+        images: ghcr.io/${{ github.repository_owner }}/freshrss-preview
+        tags: type=raw,value=pr-2-eb3bcf7be
         labels: |
           org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          org.opencontainers.image.revision=${{ env.PREVIEW_COMMIT }}
           org.opencontainers.image.url=https://freshrss.org/
           org.opencontainers.image.version=${{ env.FRESHRSS_VERSION }}
 
@@ -82,7 +80,7 @@ jobs:
         platforms: linux/amd64,linux/arm/v7,linux/arm64
         build-args: |
           FRESHRSS_VERSION=${{ env.FRESHRSS_VERSION }}
-          SOURCE_COMMIT=${{ github.sha }}
+          SOURCE_COMMIT=${{ env.PREVIEW_COMMIT }}
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
         push: true
