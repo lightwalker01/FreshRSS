@@ -18,7 +18,10 @@ permissions: {}
 
 jobs:
   build-container-image:
+    if: github.repository == 'FreshRSS/FreshRSS' || (github.repository == 'lightwalker01/FreshRSS' && github.ref == 'refs/heads/edge')
     name: Build Docker image ${{ matrix.name }}
+    env:
+      PUBLISH_IMAGE: ${{ ((github.repository == 'FreshRSS/FreshRSS' && (github.ref == 'refs/heads/latest' || github.ref == 'refs/heads/edge' || startsWith(github.ref, 'refs/tags/'))) || (github.repository == 'lightwalker01/FreshRSS' && github.ref == 'refs/heads/edge')) && 'true' || 'false' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -31,7 +34,9 @@ jobs:
             flavor: |
               latest=auto
             tags: |
-              type=edge,onlatest=false
+              type=edge,onlatest=false,enable=${{ github.repository == 'FreshRSS/FreshRSS' }}
+              type=raw,value=edge,enable=${{ github.repository == 'lightwalker01/FreshRSS' }}
+              type=sha,prefix=sha-,enable=${{ github.repository == 'lightwalker01/FreshRSS' }}
               type=semver,pattern={{version}}
               type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/0.') }}
             #  type=semver,pattern={{major}}.{{minor}}
@@ -41,7 +46,9 @@ jobs:
               latest=false
             tags: |
               type=raw,value=alpine,enable=${{ github.ref == 'refs/heads/latest' || startsWith(github.ref, 'refs/tags/') }}
-              type=edge,suffix=-alpine,onlatest=false
+              type=edge,suffix=-alpine,onlatest=false,enable=${{ github.repository == 'FreshRSS/FreshRSS' }}
+              type=raw,value=edge-alpine,enable=${{ github.repository == 'lightwalker01/FreshRSS' }}
+              type=sha,prefix=sha-,suffix=-alpine,enable=${{ github.repository == 'lightwalker01/FreshRSS' }}
               type=semver,pattern={{version}}-alpine
               type=semver,pattern={{major}}-alpine,enable=${{ !startsWith(github.ref, 'refs/tags/0.') }}
             #  type=semver,pattern={{major}}.{{minor}}-alpine
@@ -72,19 +79,22 @@ jobs:
 
     - name: Add metadata to Docker images
       id: meta
+      env:
+        DOCKER_METADATA_SHORT_SHA_LENGTH: '12'
       uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
       with:
         flavor: ${{ matrix.flavor }}
         images: |
-          docker.io/freshrss/freshrss
+          name=docker.io/freshrss/freshrss,enable=${{ github.repository == 'FreshRSS/FreshRSS' }}
           ghcr.io/${{ github.repository }}
         tags: ${{ matrix.tags }}
         labels: |
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           org.opencontainers.image.url=https://freshrss.org/
           org.opencontainers.image.version=${{ env.FRESHRSS_VERSION }}
 
     - name: Login to GitHub Container Registry
-      if: github.repository_owner == 'FreshRSS'
+      if: env.PUBLISH_IMAGE == 'true'
       uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
       with:
         registry: ghcr.io
@@ -102,6 +112,6 @@ jobs:
           SOURCE_COMMIT=${{ github.sha }}
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
-        push: ${{ (github.ref == 'refs/heads/latest' || github.ref == 'refs/heads/edge' || startsWith(github.ref, 'refs/tags/')) && github.repository_owner == 'FreshRSS' }}
+        push: ${{ env.PUBLISH_IMAGE == 'true' }}
         provenance: mode=max
         sbom: true
