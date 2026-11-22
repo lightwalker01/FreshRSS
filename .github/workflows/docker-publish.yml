@@ -4,24 +4,20 @@ on:
   push:
     branches:
       - edge
-  release:
-    types: [published]
   workflow_dispatch:
 
 # To ensure that if the latest push finishes faster than an earlier run, the previous run won't
 # overwrite it later. (by queueing the runs)
 concurrency:
-  group: docker-publish-${{ github.ref_name }} # e.g. docker-publish-edge, docker-publish-latest, docker-publish-1.29.1
+  group: docker-publish-${{ github.ref_name }}
   cancel-in-progress: false
 
 permissions: {}
 
 jobs:
   build-container-image:
-    if: github.repository == 'FreshRSS/FreshRSS' || (github.repository == 'lightwalker01/FreshRSS' && github.ref == 'refs/heads/edge')
+    if: github.ref == 'refs/heads/edge'
     name: Build Docker image ${{ matrix.name }}
-    env:
-      PUBLISH_IMAGE: ${{ ((github.repository == 'FreshRSS/FreshRSS' && (github.ref == 'refs/heads/latest' || github.ref == 'refs/heads/edge' || startsWith(github.ref, 'refs/tags/'))) || (github.repository == 'lightwalker01/FreshRSS' && github.ref == 'refs/heads/edge')) && 'true' || 'false' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -31,35 +27,15 @@ jobs:
         include:
           - name: Debian
             file: Docker/Dockerfile
-            flavor: |
-              latest=auto
             tags: |
-              type=edge,onlatest=false,enable=${{ github.repository == 'FreshRSS/FreshRSS' }}
-              type=raw,value=edge,enable=${{ github.repository == 'lightwalker01/FreshRSS' }}
-              type=sha,prefix=sha-,enable=${{ github.repository == 'lightwalker01/FreshRSS' }}
-              type=semver,pattern={{version}}
-              type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/0.') }}
-            #  type=semver,pattern={{major}}.{{minor}}
+              type=raw,value=edge
+              type=sha,prefix=sha-
           - name: Alpine
             file: Docker/Dockerfile-Alpine
-            flavor: |
-              latest=false
             tags: |
-              type=raw,value=alpine,enable=${{ github.ref == 'refs/heads/latest' || startsWith(github.ref, 'refs/tags/') }}
-              type=edge,suffix=-alpine,onlatest=false,enable=${{ github.repository == 'FreshRSS/FreshRSS' }}
-              type=raw,value=edge-alpine,enable=${{ github.repository == 'lightwalker01/FreshRSS' }}
-              type=sha,prefix=sha-,suffix=-alpine,enable=${{ github.repository == 'lightwalker01/FreshRSS' }}
-              type=semver,pattern={{version}}-alpine
-              type=semver,pattern={{major}}-alpine,enable=${{ !startsWith(github.ref, 'refs/tags/0.') }}
-            #  type=semver,pattern={{major}}.{{minor}}-alpine
+              type=raw,value=edge-alpine
+              type=sha,prefix=sha-,suffix=-alpine
     steps:
-    - name: Login to Docker Hub
-      if: github.repository_owner == 'FreshRSS'
-      uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
-
     - name: Set up QEMU
       uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
 
@@ -83,10 +59,8 @@ jobs:
         DOCKER_METADATA_SHORT_SHA_LENGTH: '12'
       uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
       with:
-        flavor: ${{ matrix.flavor }}
-        images: |
-          name=docker.io/freshrss/freshrss,enable=${{ github.repository == 'FreshRSS/FreshRSS' }}
-          ghcr.io/${{ github.repository }}
+        flavor: latest=false
+        images: ghcr.io/${{ github.repository }}
         tags: ${{ matrix.tags }}
         labels: |
           org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
@@ -94,7 +68,6 @@ jobs:
           org.opencontainers.image.version=${{ env.FRESHRSS_VERSION }}
 
     - name: Login to GitHub Container Registry
-      if: env.PUBLISH_IMAGE == 'true'
       uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
       with:
         registry: ghcr.io
@@ -112,6 +85,6 @@ jobs:
           SOURCE_COMMIT=${{ github.sha }}
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
-        push: ${{ env.PUBLISH_IMAGE == 'true' }}
+        push: true
         provenance: mode=max
         sbom: true
