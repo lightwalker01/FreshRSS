@@ -6,9 +6,33 @@ There are some "official" extensions (supported and published by the FreshRSS de
 
 ## Extension repositories
 
-Most known extensions are listed in the front end: see configuration menu `Configuration/Extensions`.
+Open **Configuration → Extensions** to browse the catalogue.
+The **Official** section lists extensions from [FreshRSS/Extensions](https://github.com/FreshRSS/Extensions).
+The **Unofficial** section lists independently maintained extensions.
+The privacy preference for retrieving the extension list controls catalogue access.
+**Refresh catalogue** reloads the catalogue and updates the displayed versions.
+Local extensions remain available when catalogue retrieval is disabled.
 
-## How to install
+## Marketplace
+
+Administrators can install and update approved versions, and uninstall third-party extensions for the entire instance.
+FreshRSS pins approved versions to a source commit and an archive checksum.
+An unapproved or incompatible version remains visible with an explanation.
+For unofficial packages, check the displayed repository before confirming.
+Extensions contain PHP code that FreshRSS loads while discovering installed extensions.
+
+Installation leaves the extension disabled until it is explicitly enabled.
+User extensions can be enabled or disabled by each user. System extensions are managed by administrators.
+**Update** replaces an approved marketplace installation while retaining its configuration and activation state.
+FreshRSS requires a verified marketplace installation before offering an update.
+Uninstalling requires confirmation and removes the files for every user.
+
+For Docker, mount a persistent volume at `/var/www/FreshRSS/extensions` alongside the data volume.
+The extensions volume must be writable by the web server for marketplace operations.
+A read-only extensions volume still allows catalogue browsing and the management of activation and user settings.
+Keep the hidden `.marketplace` directory with the extension volume so FreshRSS can recover an interrupted update.
+
+## How to install manually
 
 Upload the folder (f.e. `CustomCSS`) of your chosen extension into your `./extensions` directory.
 

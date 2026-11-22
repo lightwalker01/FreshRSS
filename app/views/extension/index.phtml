@@ -33,14 +33,27 @@
 		</ul>
 	<?php }
 
-	if (empty($this->extension_list['system']) && empty($this->extension_list['user'])) {
+	if (Minz_ExtensionManager::listExtensions() === []) {
 	?>
 	<p class="alert alert-warn"><?= _t('admin.extensions.empty_list') ?></p>
 	<?php } ?>
 	</form>
 
-	<?php if (!empty($this->available_extensions)) { ?>
-		<h2><?= _t('admin.extensions.community') ?></h2>
+	<?php if ($this->catalog_enabled) { ?>
+		<form method="post" action="<?= _url('extension', 'refresh') ?>">
+			<input type="hidden" name="_csrf" value="<?= FreshRSS_Auth::csrfToken() ?>" />
+			<button class="btn"><?= _t('admin.extensions.marketplace.refresh') ?></button>
+		</form>
+	<?php } else { ?>
+		<p><?= _t('admin.extensions.marketplace.privacy') ?></p>
+	<?php } ?>
+
+	<?php foreach ($this->marketplace as $group => $rows) { ?>
+		<h2><?= _t('admin.extensions.marketplace.' . $group) ?></h2>
+		<?php if ($rows === []) { ?>
+			<p><?= _t('admin.extensions.empty_list_help') ?></p>
+			<?php continue;
+		} ?>
 		<div class="table-wrapper scrollbar-thin">
 			<table>
 				<tr>
@@ -48,34 +61,55 @@
 					<th><?= _t('admin.extensions.version') ?></th>
 					<th><?= _t('admin.extensions.author') ?></th>
 					<th><?= _t('admin.extensions.description') ?></th>
-					<th><?= _t('admin.extensions.is_compatible') ?></th>
+					<th><?= _t('gen.action.manage') ?></th>
 				</tr>
-				<?php foreach ($this->available_extensions as $ext) { ?>
+				<?php foreach ($rows as $row) {
+					$entry = $row['entry'];
+					$status = $row['status'];
+					$encode = static fn (string $text): string => htmlspecialchars($text, ENT_QUOTES, 'UTF-8');
+					$newer = $status['version'] !== '' && version_compare($status['version'], $entry['version'], '<');
+					$this->ext_details = $row['local'];
+					?>
 					<tr>
-						<td><a href="<?= $ext['url'] ?>" target="_blank"><?= $ext['name'] ?></a></td>
-						<td><?= $ext['version'] ?></td>
-						<td><?= $ext['author'] ?></td>
+						<td><a href="<?= $encode($entry['url']) ?>" target="_blank" rel="noopener noreferrer"><?= $encode($entry['name']) ?></a></td>
 						<td>
-							<?= $ext['description'] ?>
-							<?php if (isset($this->extensions_installed[$ext['entrypoint']])) { ?>
-								<?php if (version_compare(strval($this->extensions_installed[$ext['entrypoint']]), strval($ext['version'])) >= 0) { ?>
-									<span class="alert alert-success">
-										<?= _t('admin.extensions.latest') ?>
-									</span>
-								<?php } elseif (strval($this->extensions_installed[$ext['entrypoint']]) !== strval($ext['version'])) { ?>
-									<span class="alert alert-warn">
-										<?= _t('admin.extensions.update') ?>
-									</span>
-								<?php } ?>
+							<?= $encode($status['version'] ?: $entry['version']) ?>
+							<?php if ($newer) { ?>
+								<br /><?= _t('admin.extensions.marketplace.new_version', $encode($entry['version'])) ?>
 							<?php } ?>
 						</td>
-						<td><?= $ext['compatibility'] ?></td>
+						<td><?= $encode($entry['author']) ?></td>
+						<td><?= $encode($entry['description']) ?></td>
+						<td>
+							<?php if ($row['local'] !== null) { ?>
+								<form method="post">
+									<input type="hidden" name="_csrf" value="<?= FreshRSS_Auth::csrfToken() ?>" />
+									<?php $this->renderHelper('extension/details'); ?>
+								</form>
+							<?php } ?>
+							<?php if ($status['reason'] !== '') { ?>
+								<p><?= _t('admin.extensions.marketplace.' . $status['reason']) ?></p>
+							<?php } elseif ($status['action'] !== '' && FreshRSS_Auth::hasAccess('admin')) { ?>
+								<form method="post" action="<?= _url('extension', 'marketplace') ?>">
+									<input type="hidden" name="_csrf" value="<?= FreshRSS_Auth::csrfToken() ?>" />
+									<input type="hidden" name="id" value="<?= FreshRSS_ExtensionCatalog::id($entry) ?>" />
+									<input type="hidden" name="operation" value="<?= $status['action'] ?>" />
+									<?php if ($group === 'community') { ?>
+										<p><?= $encode($entry['url']) ?></p>
+										<button class="btn confirm" disabled
+											data-str-confirm="<?= $encode(_t('admin.extensions.marketplace.confirm_source', $entry['url'])) ?>">
+											<?= _t('admin.extensions.marketplace.' . $status['action']) ?>
+										</button>
+									<?php } else { ?>
+										<button class="btn"><?= _t('admin.extensions.marketplace.' . $status['action']) ?></button>
+									<?php } ?>
+								</form>
+							<?php } ?>
+						</td>
 					</tr>
 				<?php } ?>
 			</table>
 		</div>
-	<?php } else { ?>
-		<p class="alert alert-warn"><?= _t('admin.extensions.empty_list_help') ?></p>
 	<?php } ?>
 </main>
 
